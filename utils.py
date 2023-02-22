@@ -223,8 +223,8 @@ def init_distributed_mode(args):
         args.gpu = args.rank % torch.cuda.device_count()
     else:
         print('Not using distributed mode')
-        args.distributed = False
-        return
+        # args.distributed = False
+        # return
 
     args.distributed = True
 

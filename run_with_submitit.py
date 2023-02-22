@@ -36,10 +36,12 @@ def get_shared_folder() -> Path:
     raise RuntimeError("No shared folder available")
 
 
-def get_init_file():
+def get_init_file(job_dir):
     # Init file must not exist, but it's parent dir must exist.
-    os.makedirs(str(get_shared_folder()), exist_ok=True)
-    init_file = get_shared_folder() / f"{uuid.uuid4().hex}_init"
+    p = Path(job_dir)
+    p.mkdir(exist_ok=True)
+    os.makedirs(str(p), exist_ok=True)
+    init_file = p / f"{uuid.uuid4().hex}_init"
     if init_file.exists():
         os.remove(str(init_file))
     return init_file
@@ -59,7 +61,7 @@ class Trainer(object):
         import os
         import submitit
 
-        self.args.dist_url = get_init_file().as_uri()
+        self.args.dist_url = get_init_file(self.args.job_dir).as_uri()
         checkpoint_file = os.path.join(self.args.output_dir, "checkpoint.pth")
         if os.path.exists(checkpoint_file):
             self.args.resume = checkpoint_file
@@ -82,7 +84,8 @@ class Trainer(object):
 def main():
     args = parse_args()
     if args.job_dir == "":
-        args.job_dir = get_shared_folder() / "%j"
+        # args.job_dir = get_shared_folder() / "%j"
+        raise RuntimeError("job_dir is not set")
 
     # Note that the folder will depend on the job_id, to easily track experiments
     executor = submitit.AutoExecutor(folder=args.job_dir, slurm_max_num_timeout=30)
@@ -113,7 +116,7 @@ def main():
 
     executor.update_parameters(name="deit")
 
-    args.dist_url = get_init_file().as_uri()
+    args.dist_url = get_init_file(args.job_dir).as_uri()
     args.output_dir = args.job_dir
 
     trainer = Trainer(args)

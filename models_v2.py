@@ -12,21 +12,46 @@ from timm.models.registry import register_model
 
 class Attention(nn.Module):
     # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
-    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
+                 q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False):
         super().__init__()
         self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = qk_scale or head_dim ** -0.5
+        self.head_dim = dim // num_heads
+        self.scale = qk_scale or self.head_dim ** -0.5
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.to_q = nn.Linear(dim, dim, bias=qkv_bias)
+        self.to_k = nn.Linear(dim, dim, bias=qkv_bias)
+        self.to_v = nn.Linear(dim, dim, bias=qkv_bias)        
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+        self.q_pre_flag = q_pre_flag
+        self.k_pre_flag = k_pre_flag
+        self.v_pre_flag = v_pre_flag
+        self.q_post_flag = q_post_flag
+        self.k_post_flag = k_post_flag
+        self.v_post_flag = v_post_flag
+        print(q_pre_flag, k_pre_flag, v_pre_flag, q_post_flag, k_post_flag, v_post_flag)
+
+        self.norm1 = nn.LayerNorm(dim,           eps=1e-6, elementwise_affine=True)
+        self.norm2 = nn.LayerNorm(self.head_dim, eps=1e-6, elementwise_affine=False)
+
     def forward(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        y = self.norm1(x)
+        q = y if self.q_pre_flag else x
+        k = y if self.k_pre_flag else x
+        v = y if self.v_pre_flag else x
+
+        q = self.to_q(q).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        k = self.to_k(k).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        v = self.to_v(v).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+
+        q = self.norm2(q) if self.q_post_flag else q
+        k = self.norm2(k) if self.k_post_flag else k
+        v = self.norm2(v) if self.v_post_flag else v
         
         q = q * self.scale
 
@@ -45,7 +70,7 @@ class Block(nn.Module):
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,Attention_block = Attention,Mlp_block=Mlp
                  ,init_values=1e-4):
         super().__init__()
-        self.norm1 = norm_layer(dim)
+        # self.norm1 = norm_layer(dim)
         self.attn = Attention_block(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
@@ -55,7 +80,7 @@ class Block(nn.Module):
         self.mlp = Mlp_block(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
     def forward(self, x):
-        x = x + self.drop_path(self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.attn(x))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x 
     
@@ -66,7 +91,7 @@ class Layer_scale_init_Block(nn.Module):
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,Attention_block = Attention,Mlp_block=Mlp
                  ,init_values=1e-4):
         super().__init__()
-        self.norm1 = norm_layer(dim)
+        # self.norm1 = norm_layer(dim)
         self.attn = Attention_block(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
@@ -78,7 +103,7 @@ class Layer_scale_init_Block(nn.Module):
         self.gamma_2 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
 
     def forward(self, x):
-        x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x)))
+        x = x + self.drop_path(self.gamma_1 * self.attn(x))
         x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
         return x
 
@@ -89,8 +114,8 @@ class Layer_scale_init_Block_paralx2(nn.Module):
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,Attention_block = Attention,Mlp_block=Mlp
                  ,init_values=1e-4):
         super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.norm11 = norm_layer(dim)
+        # self.norm1 = norm_layer(dim)
+        # self.norm11 = norm_layer(dim)
         self.attn = Attention_block(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
@@ -108,7 +133,7 @@ class Layer_scale_init_Block_paralx2(nn.Module):
         self.gamma_2_1 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
         
     def forward(self, x):
-        x = x + self.drop_path(self.gamma_1*self.attn(self.norm1(x))) + self.drop_path(self.gamma_1_1 * self.attn1(self.norm11(x)))
+        x = x + self.drop_path(self.gamma_1*self.attn(x)) + self.drop_path(self.gamma_1_1 * self.attn1(x))
         x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x))) + self.drop_path(self.gamma_2_1 * self.mlp1(self.norm21(x)))
         return x
         
@@ -119,8 +144,8 @@ class Block_paralx2(nn.Module):
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,Attention_block = Attention,Mlp_block=Mlp
                  ,init_values=1e-4):
         super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.norm11 = norm_layer(dim)
+        # self.norm1 = norm_layer(dim)
+        # self.norm11 = norm_layer(dim)
         self.attn = Attention_block(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
         # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
@@ -134,7 +159,7 @@ class Block_paralx2(nn.Module):
         self.mlp1 = Mlp_block(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
     def forward(self, x):
-        x = x + self.drop_path(self.attn(self.norm1(x))) + self.drop_path(self.attn1(self.norm11(x)))
+        x = x + self.drop_path(self.attn(x)) + self.drop_path(self.attn1(x))
         x = x + self.drop_path(self.mlp(self.norm2(x))) + self.drop_path(self.mlp1(self.norm21(x)))
         return x
         
@@ -222,7 +247,7 @@ class vit_models(nn.Module):
             trunc_normal_(m.weight, std=.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
+        elif isinstance(m, nn.LayerNorm) and m.elementwise_affine:
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
@@ -269,19 +294,21 @@ class vit_models(nn.Module):
 # DeiT III: Revenge of the ViT (https://arxiv.org/abs/2204.07118)
 
 @register_model
-def deit_tiny_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False,   **kwargs):
+def deit_tiny_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, **kwargs)
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, 
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
     
     return model
     
     
 @register_model
-def deit_small_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False,  **kwargs):
+def deit_small_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, **kwargs)
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, 
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_small_'+str(img_size)+'_'
@@ -299,10 +326,11 @@ def deit_small_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False
     return model
 
 @register_model
-def deit_medium_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, **kwargs):
+def deit_medium_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
     model = vit_models(
         patch_size=16, embed_dim=512, depth=12, num_heads=8, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers = Layer_scale_init_Block, **kwargs)
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers = Layer_scale_init_Block,
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_medium_'+str(img_size)+'_'
@@ -319,10 +347,11 @@ def deit_medium_patch16_LS(pretrained=False, img_size=224, pretrained_21k = Fals
     return model 
 
 @register_model
-def deit_base_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False,  **kwargs):
+def deit_base_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, **kwargs)
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block,
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_base_'+str(img_size)+'_'
         if pretrained_21k:
@@ -338,10 +367,11 @@ def deit_base_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False,
     return model
     
 @register_model
-def deit_large_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False,  **kwargs):
+def deit_large_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, **kwargs)
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, 
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_large_'+str(img_size)+'_'
         if pretrained_21k:
@@ -357,10 +387,11 @@ def deit_large_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False
     return model
     
 @register_model
-def deit_huge_patch14_LS(pretrained=False, img_size=224, pretrained_21k = False,  **kwargs):
+def deit_huge_patch14_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=14, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4, qkv_bias=True,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers = Layer_scale_init_Block, **kwargs)
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers = Layer_scale_init_Block, 
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_huge_'+str(img_size)+'_'
         if pretrained_21k:
@@ -374,7 +405,7 @@ def deit_huge_patch14_LS(pretrained=False, img_size=224, pretrained_21k = False,
         )
         model.load_state_dict(checkpoint["model"])
     return model
-    
+"""
 @register_model
 def deit_huge_patch14_52_LS(pretrained=False, img_size=224, pretrained_21k = False,  **kwargs):
     model = vit_models(
@@ -421,7 +452,7 @@ def deit_giant_40_patch14_LS(pretrained=False, img_size=224, pretrained_21k = Fa
     #model.default_cfg = _cfg()
 
     return model
-
+"""
 # Models from Three things everyone should know about Vision Transformers (https://arxiv.org/pdf/2203.09795.pdf)
 
 @register_model

@@ -52,6 +52,13 @@ def get_args_parser():
     parser.add_argument('--model-ema-decay', type=float, default=0.99996, help='')
     parser.add_argument('--model-ema-force-cpu', action='store_true', default=False, help='')
 
+    parser.add_argument('--q-pre-flag', action='store_true', default=False)
+    parser.add_argument('--k-pre-flag', action='store_true', default=False)
+    parser.add_argument('--v-pre-flag', action='store_true', default=False)
+    parser.add_argument('--q-post-flag', action='store_true', default=False)
+    parser.add_argument('--k-post-flag', action='store_true', default=False)
+    parser.add_argument('--v-post-flag', action='store_true', default=False)
+
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
                         help='Optimizer (default: "adamw"')
@@ -263,7 +270,13 @@ def main(args):
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
         drop_block_rate=None,
-        img_size=args.input_size
+        img_size=args.input_size,
+        q_pre_flag=args.q_pre_flag,
+        k_pre_flag=args.k_pre_flag,
+        v_pre_flag=args.v_pre_flag,
+        q_post_flag=args.q_post_flag,
+        k_post_flag=args.k_post_flag,
+        v_post_flag=args.v_post_flag
     )
 
                     
