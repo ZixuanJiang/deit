@@ -1,7 +1,7 @@
 path_to_imagenet = "/home/usr1/zixuan/ImageNet/data"
 job_root_dir = "/home/usr1/zixuan/deit/experiments/"  # please use absolute path here
 model = "b"
-
+epochs = 400
 seed = 0
 
 name_dict = {
@@ -11,20 +11,35 @@ name_dict = {
     'h': 'deit_huge_patch14_LS', }
 
 setting_dict = {
-    's': '--batch 256 --nodes 1 --ngpus 8 --lr 4e-3 --input-size 224 --drop-path 0.05 ',
-    'b': '--batch 256 --nodes 1 --ngpus 8 --lr 3e-3 --input-size 192 --drop-path 0.2  ',
-    'l': '--batch 64  --nodes 4 --ngpus 8 --lr 3e-3 --input-size 192 --drop-path 0.45 ',
-    'h': '--batch 64  --nodes 4 --ngpus 8 --lr 3e-3 --input-size 160 --drop-path 0.6  ',
+    's': '--batch 256 --nodes 1 --ngpus 8 --lr 4e-3 --input-size 224 ',
+    'b': '--batch 256 --nodes 1 --ngpus 8 --lr 3e-3 --input-size 192 ',
+    'l': '--batch 64  --nodes 4 --ngpus 8 --lr 3e-3 --input-size 192 ',
+    'h': '--batch 64  --nodes 4 --ngpus 8 --lr 3e-3 --input-size 160 ',
+}
+
+stochastic_depth_drop_rate = {
+    't': 0.0,
+    's': 0.0,
+    'b': 0.1,
+    'l': 0.4,
+    'h': 0.5,
 }
 
 
 def generate_one_command(q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False,
                          same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, job_dir=None):
+    drop_path = stochastic_depth_drop_rate[model]
+    if epochs <= 400:
+        weight_decay = 0.02
+    else:
+        weight_decay = 0.05
+        drop_path += (epochs - 400) // 200 * 0.05
+
     res = "python run_with_submitit.py "
     res += f"--model {name_dict[model]} "
-    res += f"--data-path {path_to_imagenet} --job_dir {job_dir} "
+    res += f"--data-path {path_to_imagenet} --job_dir {job_dir} --epochs {epochs} --weight-decay {weight_decay} --drop-path {drop_path} --seed {seed} "
     res += setting_dict[model]
-    res += f'--epochs 800 --weight-decay 0.05 --sched cosine --eval-crop-ratio 1.0 --reprob 0.0 --smoothing 0.0 --warmup-epochs 5 --drop 0.0 --seed {seed} --opt fusedlamb --warmup-lr 1e-6 --mixup .8 --cutmix 1.0 --unscale-lr --repeated-aug --bce-loss  --color-jitter 0.3 --ThreeAugment '
+    res += '--sched cosine --eval-crop-ratio 1.0 --reprob 0.0 --smoothing 0.0 --warmup-epochs 5 --drop 0.0 --opt fusedlamb --warmup-lr 1e-6 --mixup .8 --cutmix 1.0 --unscale-lr --repeated-aug --bce-loss  --color-jitter 0.3 --ThreeAugment '
 
     if q_pre_flag:
         res += '--q-pre-flag '
