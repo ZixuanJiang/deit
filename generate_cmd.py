@@ -18,7 +18,8 @@ setting_dict = {
 }
 
 
-def generate_one_command(q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, job_dir=None):
+def generate_one_command(q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False,
+                         same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, job_dir=None):
     res = "python run_with_submitit.py "
     res += f"--model {name_dict[model]} "
     res += f"--data-path {path_to_imagenet} --job_dir {job_dir} "
@@ -37,25 +38,37 @@ def generate_one_command(q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_po
         res += '--k-post-flag '
     if v_post_flag:
         res += '--v-post-flag '
+    if same_kv:
+        res += '--same-kv '
+    if single_side_norm:
+        res += '--single-side-norm '
+    if clamp_min:
+        res += f'--clamp-min {clamp_min} '
+    if clamp_max:
+        res += f'--clamp-max {clamp_max} '
 
     res += '\n'
 
     return res
 
 
-print(generate_one_command(False, False, False, False, False, False, job_root_dir + 'none-none'))
+print(generate_one_command(job_dir=job_root_dir + 'baseline'))
 
-print(generate_one_command(True, False, False, False, False, False, job_root_dir + 'q-none'))
-print(generate_one_command(False, False, False, True, False, False, job_root_dir + 'none-q'))
+print(generate_one_command(same_kv=True, job_dir=job_root_dir + 'same-kv'))
+print(generate_one_command(single_side_norm=True, clamp_min=1e-6, clamp_max=1, job_dir=job_root_dir + 'sln-max1'))
+print(generate_one_command(single_side_norm=True, clamp_min=1, clamp_max=None, job_dir=job_root_dir + 'sln-min1'))
 
-print(generate_one_command(False, True, False, False, False, False, job_root_dir + 'k-none'))
-print(generate_one_command(False, False, False, False, True, False, job_root_dir + 'none-k'))
+print(generate_one_command(False, False, False, False, False, False, job_dir=job_root_dir + 'none-none'))
+print(generate_one_command(False, False, False, True, True, True, job_dir=job_root_dir + 'none-qkv'))
 
-print(generate_one_command(False, False, True, False, False, False, job_root_dir + 'v-none'))
-print(generate_one_command(False, False, False, False, False, True, job_root_dir + 'none-v'))
+print(generate_one_command(True, False, False, False, False, False, job_dir=job_root_dir + 'q-none'))
+print(generate_one_command(False, False, False, True, False, False, job_dir=job_root_dir + 'none-q'))
 
-print(generate_one_command(True, True, False, False, False, False, job_root_dir + 'qk-none'))
-print(generate_one_command(False, False, False, True, True, False, job_root_dir + 'none-qk'))
+print(generate_one_command(False, True, False, False, False, False, job_dir=job_root_dir + 'k-none'))
+print(generate_one_command(False, False, False, False, True, False, job_dir=job_root_dir + 'none-k'))
 
-print(generate_one_command(True, True, True, False, False, False, job_root_dir + 'qkv-none'))
-print(generate_one_command(False, False, False, True, True, True, job_root_dir + 'none-qkv'))
+print(generate_one_command(False, False, True, False, False, False, job_dir=job_root_dir + 'v-none'))
+print(generate_one_command(False, False, False, False, False, True, job_dir=job_root_dir + 'none-v'))
+
+print(generate_one_command(True, True, False, False, False, False, job_dir=job_root_dir + 'qk-none'))
+print(generate_one_command(False, False, False, True, True, False, job_dir=job_root_dir + 'none-qk'))

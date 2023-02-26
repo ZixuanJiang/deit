@@ -10,18 +10,34 @@ from timm.models.vision_transformer import Mlp, PatchEmbed , _cfg
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
+class SingleSideLayerNorm(torch.nn.LayerNorm):
+    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True, device=None, dtype=None, clamp_min=None, clamp_max=None):
+        super().__init__(normalized_shape, eps, elementwise_affine, device, dtype)
+        self.clamp_min = clamp_min
+        self.clamp_max = clamp_max
+        
+    def forward(self, input):
+        mean, std = input.mean(dim=-1, keepdim=True), input.std(dim=-1, keepdim=True, unbiased=False)
+        out = (input - mean) / torch.clamp(std, min=self.clamp_min, max=self.clamp_max)
+        if self.elementwise_affine:
+            out = out * self.weight + self.bias
+        return out
+
 class Attention(nn.Module):
     # taken from https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
-                 q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False):
+                 q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False,
+                 same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = qk_scale or self.head_dim ** -0.5
 
+        self.same_kv = same_kv
         self.to_q = nn.Linear(dim, dim, bias=qkv_bias)
-        self.to_k = nn.Linear(dim, dim, bias=qkv_bias)
-        self.to_v = nn.Linear(dim, dim, bias=qkv_bias)        
+        self.to_k = nn.Linear(dim, dim, bias=False)
+        if not same_kv:
+            self.to_v = nn.Linear(dim, dim, bias=False)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
@@ -32,9 +48,13 @@ class Attention(nn.Module):
         self.q_post_flag = q_post_flag
         self.k_post_flag = k_post_flag
         self.v_post_flag = v_post_flag
-        print(q_pre_flag, k_pre_flag, v_pre_flag, q_post_flag, k_post_flag, v_post_flag)
+        print(q_pre_flag, k_pre_flag, v_pre_flag, q_post_flag, k_post_flag, v_post_flag, same_kv)
 
-        self.norm1 = nn.LayerNorm(dim,           eps=1e-6, elementwise_affine=True)
+        if single_side_norm:
+            print(f"using single-sided normalization clamp min {clamp_min} max {clamp_max}")
+            self.norm1 = SingleSideLayerNorm(dim, eps=1e-6, elementwise_affine=False, clamp_min=clamp_min, clamp_max=clamp_max)
+        else:
+            self.norm1 = nn.LayerNorm(dim, eps=1e-6, elementwise_affine=False)
         self.norm2 = nn.LayerNorm(self.head_dim, eps=1e-6, elementwise_affine=False)
 
     def forward(self, x):
@@ -43,15 +63,20 @@ class Attention(nn.Module):
         y = self.norm1(x)
         q = y if self.q_pre_flag else x
         k = y if self.k_pre_flag else x
-        v = y if self.v_pre_flag else x
+        if not self.same_kv:
+            v = y if self.v_pre_flag else x
 
         q = self.to_q(q).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         k = self.to_k(k).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
-        v = self.to_v(v).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        if not self.same_kv:
+            v = self.to_v(v).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
         q = self.norm2(q) if self.q_post_flag else q
         k = self.norm2(k) if self.k_post_flag else k
-        v = self.norm2(v) if self.v_post_flag else v
+        if not self.same_kv:
+            v = self.norm2(v) if self.v_post_flag else v
+        else:
+            v = k
         
         q = q * self.scale
 
@@ -294,21 +319,21 @@ class vit_models(nn.Module):
 # DeiT III: Revenge of the ViT (https://arxiv.org/abs/2204.07118)
 
 @register_model
-def deit_tiny_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
+def deit_tiny_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, 
-        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), **kwargs)
     
     return model
     
     
 @register_model
-def deit_small_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
+def deit_small_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, 
-        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_small_'+str(img_size)+'_'
@@ -326,11 +351,11 @@ def deit_small_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False
     return model
 
 @register_model
-def deit_medium_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
+def deit_medium_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs):
     model = vit_models(
         patch_size=16, embed_dim=512, depth=12, num_heads=8, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers = Layer_scale_init_Block,
-        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), **kwargs)
     model.default_cfg = _cfg()
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_medium_'+str(img_size)+'_'
@@ -347,11 +372,11 @@ def deit_medium_patch16_LS(pretrained=False, img_size=224, pretrained_21k = Fals
     return model 
 
 @register_model
-def deit_base_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
+def deit_base_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block,
-        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs)
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_base_'+str(img_size)+'_'
         if pretrained_21k:
@@ -367,11 +392,11 @@ def deit_base_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False,
     return model
     
 @register_model
-def deit_large_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
+def deit_large_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block, 
-        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), **kwargs)
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_large_'+str(img_size)+'_'
         if pretrained_21k:
@@ -387,11 +412,11 @@ def deit_large_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False
     return model
     
 @register_model
-def deit_huge_patch14_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, **kwargs):
+def deit_huge_patch14_LS(pretrained=False, img_size=224, pretrained_21k = False, q_pre_flag=True, k_pre_flag=True, v_pre_flag=True, q_post_flag=False, k_post_flag=False, v_post_flag=False, same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs):
     model = vit_models(
         img_size = img_size, patch_size=14, embed_dim=1280, depth=32, num_heads=16, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers = Layer_scale_init_Block, 
-        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag), **kwargs)
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), **kwargs)
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_huge_'+str(img_size)+'_'
         if pretrained_21k:

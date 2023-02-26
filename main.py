@@ -59,6 +59,11 @@ def get_args_parser():
     parser.add_argument('--k-post-flag', action='store_true', default=False)
     parser.add_argument('--v-post-flag', action='store_true', default=False)
 
+    parser.add_argument('--same-kv', action='store_true', default=False)
+    parser.add_argument('--single-side-norm', action='store_true', default=False)
+    parser.add_argument('--clamp-min', type=float, default=None)
+    parser.add_argument('--clamp-max', type=float, default=None)
+
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
                         help='Optimizer (default: "adamw"')
@@ -276,7 +281,11 @@ def main(args):
         v_pre_flag=args.v_pre_flag,
         q_post_flag=args.q_post_flag,
         k_post_flag=args.k_post_flag,
-        v_post_flag=args.v_post_flag
+        v_post_flag=args.v_post_flag,
+        same_kv=args.same_kv,
+        single_side_norm=args.single_side_norm,
+        clamp_min=args.clamp_min,
+        clamp_max=args.clamp_max
     )
 
                     
