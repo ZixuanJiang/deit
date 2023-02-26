@@ -376,7 +376,7 @@ def deit_base_patch16_LS(pretrained=False, img_size=224, pretrained_21k = False,
     model = vit_models(
         img_size = img_size, patch_size=16, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),block_layers=Layer_scale_init_Block,
-        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), same_kv=False, single_side_norm=False, clamp_min=None, clamp_max=None, **kwargs)
+        Attention_block=partial(Attention, q_pre_flag=q_pre_flag, k_pre_flag=k_pre_flag, v_pre_flag=v_pre_flag, q_post_flag=q_post_flag, k_post_flag=k_post_flag, v_post_flag=v_post_flag, same_kv=same_kv, single_side_norm=single_side_norm, clamp_min=clamp_min, clamp_max=clamp_max), **kwargs)
     if pretrained:
         name = 'https://dl.fbaipublicfiles.com/deit/deit_3_base_'+str(img_size)+'_'
         if pretrained_21k:
