@@ -11,8 +11,8 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
 class SingleSideLayerNorm(torch.nn.LayerNorm):
-    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True, device=None, dtype=None, clamp_min=None, clamp_max=None):
-        super().__init__(normalized_shape, eps, elementwise_affine, device, dtype)
+    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True, clamp_min=None, clamp_max=None):
+        super().__init__(normalized_shape, eps, elementwise_affine)
         self.clamp_min = clamp_min
         self.clamp_max = clamp_max
         
@@ -229,6 +229,7 @@ class vit_models(nn.Module):
                  block_layers = Block,
                  Patch_layer=PatchEmbed,act_layer=nn.GELU,
                  Attention_block = Attention, Mlp_block=Mlp,
+                 pretrained_cfg=None,
                 dpr_constant=True,init_scale=1e-4,
                 mlp_ratio_clstk = 4.0):
         super().__init__()
